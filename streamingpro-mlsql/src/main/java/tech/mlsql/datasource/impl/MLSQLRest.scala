@@ -3,7 +3,6 @@ package tech.mlsql.datasource.impl
 import java.net.URLEncoder
 import java.nio.charset.Charset
 import java.util.UUID
-
 import com.jayway.jsonpath.JsonPath
 import org.apache.http.client.fluent.{Form, Request}
 import org.apache.http.entity.ContentType
@@ -24,6 +23,7 @@ import tech.mlsql.dsl.adaptor.DslTool
 import tech.mlsql.tool.{HDFSOperatorV2, Templates2}
 
 import scala.collection.mutable.ArrayBuffer
+import scala.util.parsing.json.JSON
 
 class MLSQLRest(override val uid: String) extends MLSQLSource
   with MLSQLSink
@@ -70,14 +70,16 @@ class MLSQLRest(override val uid: String) extends MLSQLSource
    **/
   override def load(reader: DataFrameReader, config: DataSourceConfig): DataFrame = {
     val skipParams = config.config.getOrElse("config.page.skip-params", "false").toBoolean
+    val valuesType = config.config.getOrElse("config.page.valuesType", "text")
     (config.config.get("config.page.next"), config.config.get("config.page.values")) match {
-      case (Some(urlTemplate), Some(jsonPath)) =>
+      case (Some(urlTemplate), Some(pageJsonPath)) =>
         val maxSize = config.config.getOrElse("config.page.limit", "1").toInt
         val maxTries = config.config.getOrElse("config.page.retry", "3").toInt
         val pageInterval = JavaUtils.timeStringAsMs(config.config.getOrElse("config.page.interval", "10ms"))
         var count = 0
 
         var pageNum = -1
+        val jsonPath = if (valuesType.equals("tuple")) "{" + pageJsonPath.substring(1, pageJsonPath.length - 1) + "}" else pageJsonPath
         // if not json path then it should be auto increment page num
         if (jsonPath.trim.toLowerCase.startsWith("auto-increment")) {
           val Array(_, initialPageNum) = jsonPath.split(":")
@@ -98,23 +100,38 @@ class MLSQLRest(override val uid: String) extends MLSQLSource
           val row = firstDf.select(F.col("content").cast(StringType), F.col("status")).head
           val content = row.getString(0)
 
-          val pageValues = if (pageNum == -1) {
-            try {
-              jsonPath.split(",").map(path => JsonPath.read[String](content, path))
-            } catch {
-              case _: com.jayway.jsonpath.PathNotFoundException =>
-                Array()
-              case e: Exception =>
-                throw e
+          var pageValues: Array[String] = Array()
+          var pageValueMap: Map[String, String] = Map()
+          var shouldStop = true
+          if (valuesType.equals("tuple")) {
+            pageValueMap = JSON.parseFull(jsonPath) match {
+              case Some(map: collection.immutable.Map[String, String]) => map.map(tuple => tuple._1 -> JsonPath.read[String](content, tuple._2))
+              case None => throw new IllegalStateException("jsonPath can not be null!")
             }
-          } else Array(pageNum.toString)
+            shouldStop = pageValueMap.isEmpty || pageValueMap.exists(value => value == null || value._1.isEmpty)
+          } else {
+            pageValues = if (pageNum == -1) {
+              try {
+                jsonPath.split(",").map(path => JsonPath.read[String](content, path))
+              } catch {
+                case _: com.jayway.jsonpath.PathNotFoundException =>
+                  Array()
+                case e: Exception =>
+                  throw e
+              }
+            } else Array(pageNum.toString)
+            shouldStop = pageValues.size == 0 || pageValues.filter(value => value == null || value.isEmpty).size > 0
+          }
 
-
-          val shouldStop = pageValues.size == 0 || pageValues.filter(value => value == null || value.isEmpty).size > 0
           if (shouldStop) {
             count = maxSize
           } else {
-            val newUrl = Templates2.evaluate(urlTemplate, pageValues)
+            val newUrl = if (valuesType.equals("tuple")) {
+              Templates2.dynamicEvaluateExpression(urlTemplate, pageValueMap)
+            } else {
+              Templates2.evaluate(urlTemplate, pageValues)
+            }
+
             RestUtils.executeWithRetrying[(Int, Option[DataFrame])](maxTries)((() => {
               try {
                 val tempDF = _http(newUrl, config.config, skipParams, config.df.get.sparkSession)
