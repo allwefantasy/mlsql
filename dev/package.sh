@@ -129,12 +129,9 @@ export MAVEN_OPTS="-Xmx6000m"
 SKIPTEST=""
 TESTPROFILE=""
 
-if [[ "${COMMAND}" == "package" ]];then
-  BASE_PROFILES="$BASE_PROFILES -Pshade"
-fi
-
 if [[ "${COMMAND}" == "package" || "${COMMAND}" == "install" || "${COMMAND}" == "deploy" ]];then
    SKIPTEST="-DskipTests"
+   BASE_PROFILES="$BASE_PROFILES -Pshade"
 fi
 
 
