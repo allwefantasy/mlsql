@@ -72,12 +72,13 @@ class MLSQLRest(override val uid: String) extends MLSQLSource
    **/
   override def load(reader: DataFrameReader, config: DataSourceConfig): DataFrame = {
     val skipParams = config.config.getOrElse("config.page.skip-params", "false").toBoolean
+    val retryInterval = JavaUtils.timeStringAsMs(config.config.getOrElse("config.retry.interval", "1s"))
+
     (config.config.get("config.page.next"), config.config.get("config.page.values")) match {
       case (Some(urlTemplate), Some(jsonPath)) =>
         val maxSize = config.config.getOrElse("config.page.limit", "1").toInt
         val maxTries = config.config.getOrElse("config.page.retry", "3").toInt
         val pageInterval = JavaUtils.timeStringAsMs(config.config.getOrElse("config.page.interval", "10ms"))
-        val retryInterval = JavaUtils.timeStringAsMs(config.config.getOrElse("config.retry.interval", "10ms"))
         var count = 1
 
         var pageNum = -1
@@ -175,7 +176,7 @@ class MLSQLRest(override val uid: String) extends MLSQLSource
       case (None, None) =>
 
         val maxTries = config.config.getOrElse("config.retry", config.config.getOrElse("config.page.retry", "3")).toInt
-        val retryInterval = JavaUtils.timeStringAsMs(config.config.getOrElse("config.retry.interval", "10ms"))
+
 
         val (_, resultDF) = RestUtils.executeWithRetrying[(Int, Option[DataFrame])](maxTries)((() => {
           try {
