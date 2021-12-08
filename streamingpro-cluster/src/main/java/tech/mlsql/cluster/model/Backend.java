@@ -34,9 +34,9 @@ public class Backend extends Model {
 
     public static Backend newOne(Map<String, String> params, boolean persist) {
         Map<String, Object> newParams = new HashMap<>();
-        params.entrySet().forEach((a) -> {
-            if (a.getKey() != "ecsResourcePoolId") {
-                newParams.put(a.getKey(), a.getValue());
+        params.forEach((key, value) -> {
+            if (!key.equals("ecsResourcePoolId")) {
+                newParams.put(key, value);
             }
         });
 
